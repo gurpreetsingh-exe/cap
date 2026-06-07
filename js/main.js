@@ -304,6 +304,16 @@ class SRTParser {
 
 globalThis.SRTParser = SRTParser;
 
+// 1
+// 00:00:33,843 --> 00:00:38,097
+// Only 3% of the water on our planet is fresh.
+// 地球上只有3%的水是淡水
+//
+// 2
+// 00:00:40,641 --> 00:00:44,687
+// Yet, these precious waters are rich with surprise.
+// 可是这些珍贵的淡水中却充满了惊奇
+
 const sampleSrt = `1
 00:00:00,000 --> 00:00:02,500
 Welcome to the Example Subtitle File!
@@ -334,6 +344,8 @@ function createMessage(message, type = "") {
 function createCueElement(cue) {
   const row = document.createElement("article");
   row.className = "cue";
+  row.dataset.cueIndex = String(cue.index);
+  row.tabIndex = 0;
 
   const index = document.createElement("div");
   index.className = "cue-index";
@@ -369,23 +381,124 @@ function createCueElement(cue) {
   return row;
 }
 
+function createTimelineCue(cue, durationMs) {
+  const element = document.createElement("button");
+  const left = durationMs > 0 ? (cue.startMs / durationMs) * 100 : 0;
+  const width = durationMs > 0 ? Math.max(1.4, (cue.durationMs / durationMs) * 100) : 1.4;
+
+  element.type = "button";
+  element.className = "timeline-cue";
+  element.dataset.cueIndex = String(cue.index);
+  element.dataset.startMs = String(cue.startMs);
+  element.style.left = `${Math.min(99, left)}%`;
+  element.style.width = `${Math.min(100 - left, width)}%`;
+  element.title = cue.text;
+  element.textContent = cue.text.split("\n")[0] || `Cue ${cue.index}`;
+  return element;
+}
+
 async function copyText(value) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("Clipboard copy is not available in this browser context.");
+  }
+
+  await navigator.clipboard.writeText(value);
+}
+
+function showToast(region, message, type = "") {
+  if (!region) {
     return;
   }
 
-  const area = document.createElement("textarea");
-  area.value = value;
-  area.style.position = "fixed";
-  area.style.opacity = "0";
-  document.body.append(area);
-  area.select();
-  document.execCommand("copy");
-  area.remove();
+  const toast = document.createElement("div");
+  toast.className = type ? `toast ${type}` : "toast";
+  toast.textContent = message;
+  region.append(toast);
+
+  window.setTimeout(() => {
+    toast.remove();
+  }, 2900);
+}
+
+function parseResolution(value) {
+  const [width, height] = String(value).split("x").map(Number);
+  return {
+    width: Number.isFinite(width) ? width : 1280,
+    height: Number.isFinite(height) ? height : 720,
+  };
+}
+
+function drawPreviewFrame(canvas, timeMs) {
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const seconds = timeMs / 1000;
+
+  const sky = context.createLinearGradient(0, 0, width, height);
+  sky.addColorStop(0, `hsl(${205 + Math.sin(seconds * 0.25) * 18}, 70%, 26%)`);
+  sky.addColorStop(0.48, "#171c27");
+  sky.addColorStop(1, "#080a0f");
+  context.fillStyle = sky;
+  context.fillRect(0, 0, width, height);
+
+  const sunX = width * (0.18 + (seconds * 0.035) % 0.72);
+  const sunY = height * (0.24 + Math.sin(seconds * 0.4) * 0.05);
+  const sun = context.createRadialGradient(sunX, sunY, 0, sunX, sunY, width * 0.18);
+  sun.addColorStop(0, "rgba(255, 221, 135, 0.95)");
+  sun.addColorStop(1, "rgba(255, 221, 135, 0)");
+  context.fillStyle = sun;
+  context.fillRect(0, 0, width, height);
+
+  context.fillStyle = "rgba(255, 255, 255, 0.12)";
+  for (let i = 0; i < 8; i += 1) {
+    const x = ((seconds * (18 + i * 6) + i * width * 0.19) % (width + 180)) - 120;
+    const y = height * (0.18 + (i % 4) * 0.08);
+    context.beginPath();
+    context.ellipse(x, y, width * 0.045, height * 0.012, 0, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.fillStyle = "#111722";
+  context.beginPath();
+  context.moveTo(0, height * 0.7);
+  for (let x = 0; x <= width; x += width / 8) {
+    const y = height * (0.62 + Math.sin(seconds * 0.5 + x * 0.01) * 0.035);
+    context.lineTo(x, y);
+  }
+  context.lineTo(width, height);
+  context.lineTo(0, height);
+  context.closePath();
+  context.fill();
+
+  const road = context.createLinearGradient(0, height * 0.64, 0, height);
+  road.addColorStop(0, "#222936");
+  road.addColorStop(1, "#0c0f15");
+  context.fillStyle = road;
+  context.beginPath();
+  context.moveTo(width * 0.42, height * 0.66);
+  context.lineTo(width * 0.58, height * 0.66);
+  context.lineTo(width * 0.82, height);
+  context.lineTo(width * 0.18, height);
+  context.closePath();
+  context.fill();
+
+  context.strokeStyle = "rgba(255, 255, 255, 0.55)";
+  context.lineWidth = Math.max(2, width * 0.003);
+  context.setLineDash([height * 0.055, height * 0.05]);
+  context.lineDashOffset = -seconds * height * 0.12;
+  context.beginPath();
+  context.moveTo(width * 0.5, height * 0.68);
+  context.lineTo(width * 0.5, height);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = "rgba(255, 255, 255, 0.72)";
+  context.font = `${Math.max(14, Math.round(width * 0.018))}px sans-serif`;
+  context.fillText(SRTParser.formatTimestamp(timeMs), width * 0.035, height * 0.07);
 }
 
 function initSrtUi() {
+  const editor = document.querySelector(".editor");
   const input = document.getElementById("srtInput");
   const fileInput = document.getElementById("fileInput");
   const parseBtn = document.getElementById("parseBtn");
@@ -398,12 +511,302 @@ function initSrtUi() {
   const issueCount = document.getElementById("issueCount");
   const messages = document.getElementById("messages");
   const cueList = document.getElementById("cueList");
+  const toastRegion = document.getElementById("toastRegion");
+  const previewCanvas = document.getElementById("previewCanvas");
+  const stageArea = document.getElementById("stageArea");
+  const videoStage = document.getElementById("videoStage");
+  const captionOverlay = document.getElementById("captionOverlay");
+  const playPreviewBtn = document.getElementById("playPreviewBtn");
+  const previewScrubber = document.getElementById("previewScrubber");
+  const previewTime = document.getElementById("previewTime");
+  const resolutionSelect = document.getElementById("resolutionSelect");
+  const activeCaptionMeta = document.getElementById("activeCaptionMeta");
+  const resolutionMeta = document.getElementById("resolutionMeta");
+  const renderLengthMeta = document.getElementById("renderLengthMeta");
+  const timelineTrack = document.getElementById("timelineTrack");
+  const timelinePlayhead = document.getElementById("timelinePlayhead");
+  const timelineDuration = document.getElementById("timelineDuration");
+  const timelineEndLabel = document.getElementById("timelineEndLabel");
+  const captionSizeInput = document.getElementById("captionSizeInput");
+  const captionColorInput = document.getElementById("captionColorInput");
+  const captionBgSelect = document.getElementById("captionBgSelect");
 
   if (!input || !parseBtn || !cueList) {
     return;
   }
 
   let parsedCues = [];
+  let previewTimeMs = 0;
+  let previewDurationMs = 1;
+  let previewPlaying = false;
+  let previewStartedAt = 0;
+  let previewStartedTime = 0;
+  let previewAnimation = null;
+  let previewFitAnimation = null;
+
+  function fitPreviewStage() {
+    if (!stageArea || !videoStage || !previewCanvas) {
+      return;
+    }
+
+    const ratio = previewCanvas.width / previewCanvas.height;
+    const styles = window.getComputedStyle(stageArea);
+    const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+    const verticalPadding = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+    const availableWidth = Math.max(1, stageArea.clientWidth - horizontalPadding);
+    const availableHeight = Math.max(1, stageArea.clientHeight - verticalPadding);
+    let width = availableWidth;
+    let height = width / ratio;
+
+    if (height > availableHeight) {
+      height = availableHeight;
+      width = height * ratio;
+    }
+
+    videoStage.style.width = `${Math.max(1, Math.floor(width))}px`;
+    videoStage.style.height = `${Math.max(1, Math.floor(height))}px`;
+  }
+
+  function schedulePreviewFit() {
+    if (previewFitAnimation !== null) {
+      window.cancelAnimationFrame(previewFitAnimation);
+    }
+
+    previewFitAnimation = window.requestAnimationFrame(() => {
+      previewFitAnimation = null;
+      fitPreviewStage();
+      renderPreview();
+    });
+  }
+
+  function initPanelResizers() {
+    if (!editor) {
+      return;
+    }
+
+    const splitters = editor.querySelectorAll("[data-splitter]");
+    splitters.forEach((splitter) => {
+      splitter.addEventListener("pointerdown", (event) => {
+        if (window.matchMedia("(max-width: 1120px)").matches) {
+          return;
+        }
+
+        event.preventDefault();
+        splitter.setPointerCapture(event.pointerId);
+        splitter.classList.add("active");
+        document.body.classList.add("resizing");
+
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startCaptions = document.querySelector(".caption-panel")?.getBoundingClientRect().width ?? 340;
+        const startProperties = document.querySelector(".properties-panel")?.getBoundingClientRect().width ?? 300;
+        const startTimeline = document.querySelector(".timeline-panel")?.getBoundingClientRect().height ?? 178;
+        const editorRect = editor.getBoundingClientRect();
+
+        function clamp(value, min, max) {
+          return Math.max(min, Math.min(max, value));
+        }
+
+        function onPointerMove(moveEvent) {
+          const kind = splitter.dataset.splitter;
+
+          if (kind === "left") {
+            const next = clamp(startCaptions + moveEvent.clientX - startX, 240, editorRect.width * 0.45);
+            editor.style.setProperty("--captions-width", `${Math.round(next)}px`);
+          }
+
+          if (kind === "right") {
+            const next = clamp(startProperties - (moveEvent.clientX - startX), 230, editorRect.width * 0.42);
+            editor.style.setProperty("--properties-width", `${Math.round(next)}px`);
+          }
+
+          if (kind === "timeline") {
+            const next = clamp(startTimeline - (moveEvent.clientY - startY), 120, editorRect.height * 0.48);
+            editor.style.setProperty("--timeline-height", `${Math.round(next)}px`);
+          }
+
+          schedulePreviewFit();
+        }
+
+        function onPointerUp() {
+          splitter.classList.remove("active");
+          document.body.classList.remove("resizing");
+          splitter.removeEventListener("pointermove", onPointerMove);
+          splitter.removeEventListener("pointerup", onPointerUp);
+          splitter.removeEventListener("pointercancel", onPointerUp);
+        }
+
+        splitter.addEventListener("pointermove", onPointerMove);
+        splitter.addEventListener("pointerup", onPointerUp);
+        splitter.addEventListener("pointercancel", onPointerUp);
+      });
+    });
+  }
+
+  function setActiveCue(activeCues) {
+    const activeIndexes = new Set(activeCues.map((cue) => String(cue.index)));
+    document.querySelectorAll(".cue, .timeline-cue").forEach((element) => {
+      element.classList.toggle("active", activeIndexes.has(element.dataset.cueIndex));
+    });
+  }
+
+  function updatePlayhead() {
+    if (!timelinePlayhead) {
+      return;
+    }
+
+    const progress = previewDurationMs > 0 ? previewTimeMs / previewDurationMs : 0;
+    timelinePlayhead.style.left = `${Math.max(0, Math.min(100, progress * 100))}%`;
+  }
+
+  function seekPreview(timeMs) {
+    previewTimeMs = Math.max(0, Math.min(previewDurationMs, timeMs));
+
+    if (previewPlaying) {
+      previewStartedAt = performance.now();
+      previewStartedTime = previewTimeMs;
+    }
+
+    renderPreview();
+  }
+
+  function renderTimeline(cues) {
+    if (!timelineTrack || !timelinePlayhead) {
+      return;
+    }
+
+    const items = cues.map((cue) => createTimelineCue(cue, previewDurationMs));
+    timelineTrack.replaceChildren(...items, timelinePlayhead);
+    updatePlayhead();
+  }
+
+  function applyCaptionStyle() {
+    const size = Math.max(14, Math.min(96, Number(captionSizeInput?.value) || 30));
+    const color = captionColorInput?.value || "#ffffff";
+    const background = {
+      none: "rgba(0, 0, 0, 0)",
+      soft: "rgba(0, 0, 0, 0.42)",
+      solid: "rgba(0, 0, 0, 0.72)",
+    }[captionBgSelect?.value || "none"];
+
+    document.documentElement.style.setProperty("--caption-size", `${size}px`);
+    document.documentElement.style.setProperty("--caption-color", color);
+    document.documentElement.style.setProperty("--caption-bg", background);
+  }
+
+  function updatePreviewResolution() {
+    if (!previewCanvas || !resolutionSelect) {
+      return;
+    }
+
+    const resolution = parseResolution(resolutionSelect.value);
+    previewCanvas.width = resolution.width;
+    previewCanvas.height = resolution.height;
+
+    if (videoStage) {
+      videoStage.style.aspectRatio = `${resolution.width} / ${resolution.height}`;
+    }
+
+    if (resolutionMeta) {
+      resolutionMeta.textContent = `${resolution.width} x ${resolution.height}`;
+    }
+
+    schedulePreviewFit();
+  }
+
+  function renderPreview() {
+    if (!previewCanvas || !captionOverlay) {
+      return;
+    }
+
+    drawPreviewFrame(previewCanvas, previewTimeMs);
+
+    const activeCues = SRTParser.atTime(parsedCues, previewTimeMs);
+    const activeText = activeCues.map((cue) => cue.text).filter(Boolean).join("\n");
+    captionOverlay.textContent = activeText;
+
+    if (activeCaptionMeta) {
+      activeCaptionMeta.textContent = activeCues.length > 0 ? `Cue ${activeCues[0].index}` : "None";
+    }
+
+    setActiveCue(activeCues);
+    updatePlayhead();
+
+    if (previewScrubber) {
+      previewScrubber.max = String(Math.max(1, previewDurationMs));
+      previewScrubber.value = String(Math.min(previewTimeMs, previewDurationMs));
+    }
+
+    if (previewTime) {
+      previewTime.textContent = SRTParser.formatTimestamp(previewTimeMs);
+    }
+  }
+
+  function stopPreview() {
+    previewPlaying = false;
+    playPreviewBtn.textContent = "Play";
+
+    if (previewAnimation !== null) {
+      window.cancelAnimationFrame(previewAnimation);
+      previewAnimation = null;
+    }
+  }
+
+  function tickPreview(now) {
+    previewTimeMs = previewStartedTime + (now - previewStartedAt);
+
+    if (previewTimeMs >= previewDurationMs) {
+      previewTimeMs = previewDurationMs;
+      renderPreview();
+      stopPreview();
+      return;
+    }
+
+    renderPreview();
+    previewAnimation = window.requestAnimationFrame(tickPreview);
+  }
+
+  function playPreview() {
+    if (parsedCues.length === 0) {
+      showToast(toastRegion, "Parse subtitles before previewing.", "error");
+      return;
+    }
+
+    if (previewTimeMs >= previewDurationMs) {
+      previewTimeMs = 0;
+    }
+
+    previewPlaying = true;
+    previewStartedAt = performance.now();
+    previewStartedTime = previewTimeMs;
+    playPreviewBtn.textContent = "Pause";
+    previewAnimation = window.requestAnimationFrame(tickPreview);
+  }
+
+  function updatePreviewDuration(cues) {
+    previewDurationMs = Math.max(1, cues.reduce((last, cue) => Math.max(last, cue.endMs), 0));
+    previewTimeMs = Math.min(previewTimeMs, previewDurationMs);
+    const displayDurationMs = cues.length > 0 ? previewDurationMs : 0;
+
+    if (previewScrubber) {
+      previewScrubber.max = String(previewDurationMs);
+    }
+
+    if (renderLengthMeta) {
+      renderLengthMeta.textContent = formatDuration(displayDurationMs);
+    }
+
+    if (timelineDuration) {
+      timelineDuration.textContent = SRTParser.formatTimestamp(displayDurationMs);
+    }
+
+    if (timelineEndLabel) {
+      timelineEndLabel.textContent = SRTParser.formatTimestamp(displayDurationMs);
+    }
+
+    renderTimeline(cues);
+    renderPreview();
+  }
 
   function setParsed(cues, errors = [], warnings = []) {
     parsedCues = cues;
@@ -434,6 +837,7 @@ function initSrtUi() {
     issueCount.textContent = String(errors.length + warnings.length);
     copyJsonBtn.disabled = cues.length === 0;
     copySrtBtn.disabled = cues.length === 0;
+    updatePreviewDuration(cues);
   }
 
   function parseInput() {
@@ -473,16 +877,106 @@ function initSrtUi() {
     parseInput();
   });
 
+  playPreviewBtn.addEventListener("click", () => {
+    if (previewPlaying) {
+      stopPreview();
+      return;
+    }
+
+    playPreview();
+  });
+
+  previewScrubber.addEventListener("input", () => {
+    previewTimeMs = Number(previewScrubber.value);
+
+    if (previewPlaying) {
+      previewStartedAt = performance.now();
+      previewStartedTime = previewTimeMs;
+    }
+
+    renderPreview();
+  });
+
+  resolutionSelect.addEventListener("change", updatePreviewResolution);
+
+  window.addEventListener("resize", () => {
+    schedulePreviewFit();
+  });
+
+  if (typeof ResizeObserver !== "undefined" && stageArea) {
+    const previewResizeObserver = new ResizeObserver(schedulePreviewFit);
+    previewResizeObserver.observe(stageArea);
+  }
+
+  cueList.addEventListener("click", (event) => {
+    const cueElement = event.target.closest(".cue");
+    if (!cueElement) {
+      return;
+    }
+
+    const cue = parsedCues.find((item) => String(item.index) === cueElement.dataset.cueIndex);
+    if (cue) {
+      seekPreview(cue.startMs);
+    }
+  });
+
+  cueList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    const cueElement = event.target.closest(".cue");
+    if (!cueElement) {
+      return;
+    }
+
+    event.preventDefault();
+    const cue = parsedCues.find((item) => String(item.index) === cueElement.dataset.cueIndex);
+    if (cue) {
+      seekPreview(cue.startMs);
+    }
+  });
+
+  timelineTrack.addEventListener("click", (event) => {
+    const cueElement = event.target.closest(".timeline-cue");
+    if (cueElement) {
+      seekPreview(Number(cueElement.dataset.startMs));
+      return;
+    }
+
+    const rect = timelineTrack.getBoundingClientRect();
+    const progress = (event.clientX - rect.left) / rect.width;
+    seekPreview(progress * previewDurationMs);
+  });
+
+  captionSizeInput.addEventListener("input", applyCaptionStyle);
+  captionColorInput.addEventListener("input", applyCaptionStyle);
+  captionBgSelect.addEventListener("change", applyCaptionStyle);
+
   copyJsonBtn.addEventListener("click", async () => {
-    await copyText(JSON.stringify(parsedCues, null, 2));
+    try {
+      await copyText(JSON.stringify(parsedCues, null, 2));
+      showToast(toastRegion, "Copied parsed JSON to clipboard.");
+    } catch (error) {
+      showToast(toastRegion, error.message, "error");
+    }
   });
 
   copySrtBtn.addEventListener("click", async () => {
-    await copyText(SRTParser.stringify(parsedCues));
+    try {
+      await copyText(SRTParser.stringify(parsedCues));
+      showToast(toastRegion, "Copied normalized SRT to clipboard.");
+    } catch (error) {
+      showToast(toastRegion, error.message, "error");
+    }
   });
 
   input.value = sampleSrt;
+  applyCaptionStyle();
+  initPanelResizers();
+  updatePreviewResolution();
   parseInput();
+  schedulePreviewFit();
 }
 
 if (typeof document !== "undefined") {
