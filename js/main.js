@@ -590,6 +590,299 @@ function renderSubtitleFrame(canvas, text, options = {}) {
   });
 }
 
+function concatBytes(parts) {
+  const length = parts.reduce((total, part) => total + part.length, 0);
+  const result = new Uint8Array(length);
+  let offset = 0;
+
+  parts.forEach((part) => {
+    result.set(part, offset);
+    offset += part.length;
+  });
+
+  return result;
+}
+
+function ebmlId(hex) {
+  const clean = hex.replaceAll(" ", "");
+  const bytes = [];
+
+  for (let i = 0; i < clean.length; i += 2) {
+    bytes.push(parseInt(clean.slice(i, i + 2), 16));
+  }
+
+  return new Uint8Array(bytes);
+}
+
+function ebmlSize(size) {
+  for (let length = 1; length <= 8; length += 1) {
+    const max = 2 ** (7 * length) - 1;
+    if (size <= max) {
+      const bytes = new Uint8Array(length);
+      let value = size;
+
+      for (let i = length - 1; i >= 0; i -= 1) {
+        bytes[i] = value & 0xff;
+        value = Math.floor(value / 256);
+      }
+
+      bytes[0] |= 1 << (8 - length);
+      return bytes;
+    }
+  }
+
+  throw new Error("EBML element is too large");
+}
+
+function ebmlUInt(value) {
+  let length = 1;
+  while (value >= 2 ** (8 * length) && length < 8) {
+    length += 1;
+  }
+
+  const bytes = new Uint8Array(length);
+  let next = value;
+
+  for (let i = length - 1; i >= 0; i -= 1) {
+    bytes[i] = next & 0xff;
+    next = Math.floor(next / 256);
+  }
+
+  return bytes;
+}
+
+function ebmlFloat64(value) {
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setFloat64(0, value, false);
+  return bytes;
+}
+
+function ebmlString(value) {
+  return new TextEncoder().encode(value);
+}
+
+function ebmlElement(id, payload) {
+  const body = Array.isArray(payload) ? concatBytes(payload) : payload;
+  return concatBytes([ebmlId(id), ebmlSize(body.length), body]);
+}
+
+function ebmlMaster(id, children) {
+  return ebmlElement(id, children);
+}
+
+function webmSimpleBlock(chunk, clusterTimecodeMs) {
+  const relativeTime = Math.round(chunk.timecodeMs - clusterTimecodeMs);
+  const header = new Uint8Array(4);
+  header[0] = 0x81;
+  new DataView(header.buffer).setInt16(1, relativeTime, false);
+  header[3] = chunk.keyFrame ? 0x80 : 0x00;
+  return ebmlElement("A3", [header, chunk.data]);
+}
+
+function muxWebM({ chunks, codec, width, height, durationMs, fps }) {
+  const codecId = codec.startsWith("vp09") ? "V_VP9" : "V_VP8";
+  const timecodeScale = 1_000_000;
+  const defaultDuration = Math.round(1_000_000_000 / fps);
+  const ebmlHeader = ebmlMaster("1A45DFA3", [
+    ebmlElement("4286", ebmlUInt(1)),
+    ebmlElement("42F7", ebmlUInt(1)),
+    ebmlElement("42F2", ebmlUInt(4)),
+    ebmlElement("42F3", ebmlUInt(8)),
+    ebmlElement("4282", ebmlString("webm")),
+    ebmlElement("4287", ebmlUInt(4)),
+    ebmlElement("4285", ebmlUInt(2)),
+  ]);
+
+  const info = ebmlMaster("1549A966", [
+    ebmlElement("2AD7B1", ebmlUInt(timecodeScale)),
+    ebmlElement("4D80", ebmlString("Caption Editor")),
+    ebmlElement("5741", ebmlString("Caption Editor")),
+    ebmlElement("4489", ebmlFloat64(durationMs)),
+  ]);
+
+  const video = ebmlMaster("E0", [
+    ebmlElement("B0", ebmlUInt(width)),
+    ebmlElement("BA", ebmlUInt(height)),
+  ]);
+
+  const track = ebmlMaster("AE", [
+    ebmlElement("D7", ebmlUInt(1)),
+    ebmlElement("73C5", ebmlUInt(1)),
+    ebmlElement("83", ebmlUInt(1)),
+    ebmlElement("23E383", ebmlUInt(defaultDuration)),
+    ebmlElement("86", ebmlString(codecId)),
+    video,
+  ]);
+
+  const tracks = ebmlMaster("1654AE6B", [track]);
+  const clusters = [];
+  let clusterTimecodeMs = -1;
+  let clusterBlocks = [];
+
+  chunks.forEach((chunk) => {
+    if (clusterTimecodeMs < 0 || chunk.timecodeMs - clusterTimecodeMs >= 5000) {
+      if (clusterBlocks.length > 0) {
+        clusters.push(ebmlMaster("1F43B675", [
+          ebmlElement("E7", ebmlUInt(clusterTimecodeMs)),
+          ...clusterBlocks,
+        ]));
+      }
+
+      clusterTimecodeMs = Math.round(chunk.timecodeMs);
+      clusterBlocks = [];
+    }
+
+    clusterBlocks.push(webmSimpleBlock(chunk, clusterTimecodeMs));
+  });
+
+  if (clusterBlocks.length > 0) {
+    clusters.push(ebmlMaster("1F43B675", [
+      ebmlElement("E7", ebmlUInt(clusterTimecodeMs)),
+      ...clusterBlocks,
+    ]));
+  }
+
+  const segment = ebmlMaster("18538067", [info, tracks, ...clusters]);
+  return new Blob([concatBytes([ebmlHeader, segment])], { type: "video/webm" });
+}
+
+function asciiBytes(value) {
+  return new TextEncoder().encode(value);
+}
+
+function mp4U8(value) {
+  return new Uint8Array([value & 0xff]);
+}
+
+function mp4U16(value) {
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, value, false);
+  return bytes;
+}
+
+function mp4U24(value) {
+  return new Uint8Array([(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]);
+}
+
+function mp4U32(value) {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, false);
+  return bytes;
+}
+
+function mp4Fixed16(value) {
+  return mp4U32(Math.round(value * 65536));
+}
+
+function mp4Box(type, parts = []) {
+  const body = concatBytes(parts);
+  return concatBytes([mp4U32(body.length + 8), asciiBytes(type), body]);
+}
+
+function mp4FullBox(type, version, flags, parts = []) {
+  return mp4Box(type, [mp4U8(version), mp4U24(flags), ...parts]);
+}
+
+function mp4Matrix() {
+  return concatBytes([
+    mp4Fixed16(1), mp4U32(0), mp4U32(0),
+    mp4U32(0), mp4Fixed16(1), mp4U32(0),
+    mp4U32(0), mp4U32(0), mp4U32(0x40000000),
+  ]);
+}
+
+function mp4VisualSampleEntry(codecBoxType, codecConfigBoxType, codecConfig, width, height) {
+  const compressorName = new Uint8Array(32);
+  return mp4Box(codecBoxType, [
+    new Uint8Array(6),
+    mp4U16(1),
+    new Uint8Array(16),
+    mp4U16(width),
+    mp4U16(height),
+    mp4Fixed16(72),
+    mp4Fixed16(72),
+    mp4U32(0),
+    mp4U16(1),
+    compressorName,
+    mp4U16(0x18),
+    mp4U16(0xffff),
+    mp4Box(codecConfigBoxType, [codecConfig]),
+  ]);
+}
+
+function muxMP4({ chunks, codec, codecConfig, width, height, fps }) {
+  if (!codecConfig) {
+    throw new Error("MP4 export requires codec configuration metadata.");
+  }
+
+  const sampleCount = chunks.length;
+  const mediaTimescale = 90_000;
+  const movieTimescale = 1000;
+  const sampleDelta = Math.round(mediaTimescale / fps);
+  const mediaDuration = sampleCount * sampleDelta;
+  const movieDuration = Math.round((mediaDuration / mediaTimescale) * movieTimescale);
+  const sampleSizes = chunks.map((chunk) => chunk.data.length);
+  const sampleData = concatBytes(chunks.map((chunk) => chunk.data));
+  const ftyp = mp4Box("ftyp", [
+    asciiBytes("isom"),
+    mp4U32(0x200),
+    asciiBytes("isom"),
+    asciiBytes("iso2"),
+    asciiBytes(codec.startsWith("avc1") ? "avc1" : codec.slice(0, 4)),
+    asciiBytes("mp41"),
+  ]);
+  const mdatHeaderSize = 8;
+  const mdat = mp4Box("mdat", [sampleData]);
+  let sampleOffset = ftyp.length + mdatHeaderSize;
+  const chunkOffsets = sampleSizes.map((size) => {
+    const offset = sampleOffset;
+    sampleOffset += size;
+    return offset;
+  });
+  const codecBoxType = codec.startsWith("avc1") ? "avc1" : codec.slice(0, 4);
+  const codecConfigBoxType = codec.startsWith("avc1") ? "avcC" : "hvcC";
+  const syncSamples = chunks
+    .map((chunk, index) => (chunk.keyFrame ? index + 1 : 0))
+    .filter(Boolean);
+
+  const mvhd = mp4FullBox("mvhd", 0, 0, [
+    mp4U32(0), mp4U32(0), mp4U32(movieTimescale), mp4U32(movieDuration),
+    mp4Fixed16(1), mp4U16(0x0100), mp4U16(0), new Uint8Array(8),
+    mp4Matrix(), new Uint8Array(24), mp4U32(2),
+  ]);
+  const tkhd = mp4FullBox("tkhd", 0, 0x000007, [
+    mp4U32(0), mp4U32(0), mp4U32(1), mp4U32(0), mp4U32(movieDuration),
+    new Uint8Array(8), mp4U16(0), mp4U16(0), mp4U16(0), mp4U16(0),
+    mp4Matrix(), mp4Fixed16(width), mp4Fixed16(height),
+  ]);
+  const mdhd = mp4FullBox("mdhd", 0, 0, [
+    mp4U32(0), mp4U32(0), mp4U32(mediaTimescale), mp4U32(mediaDuration),
+    mp4U16(0x55c4), mp4U16(0),
+  ]);
+  const hdlr = mp4FullBox("hdlr", 0, 0, [
+    mp4U32(0), asciiBytes("vide"), new Uint8Array(12), asciiBytes("VideoHandler\0"),
+  ]);
+  const vmhd = mp4FullBox("vmhd", 0, 1, [mp4U16(0), mp4U16(0), mp4U16(0), mp4U16(0)]);
+  const dref = mp4FullBox("dref", 0, 0, [mp4U32(1), mp4FullBox("url ", 0, 1)]);
+  const dinf = mp4Box("dinf", [dref]);
+  const stsd = mp4FullBox("stsd", 0, 0, [
+    mp4U32(1),
+    mp4VisualSampleEntry(codecBoxType, codecConfigBoxType, codecConfig, width, height),
+  ]);
+  const stts = mp4FullBox("stts", 0, 0, [mp4U32(1), mp4U32(sampleCount), mp4U32(sampleDelta)]);
+  const stss = mp4FullBox("stss", 0, 0, [mp4U32(syncSamples.length), ...syncSamples.map(mp4U32)]);
+  const stsc = mp4FullBox("stsc", 0, 0, [mp4U32(1), mp4U32(1), mp4U32(1), mp4U32(1)]);
+  const stsz = mp4FullBox("stsz", 0, 0, [mp4U32(0), mp4U32(sampleCount), ...sampleSizes.map(mp4U32)]);
+  const stco = mp4FullBox("stco", 0, 0, [mp4U32(chunkOffsets.length), ...chunkOffsets.map(mp4U32)]);
+  const stbl = mp4Box("stbl", [stsd, stts, stss, stsc, stsz, stco]);
+  const minf = mp4Box("minf", [vmhd, dinf, stbl]);
+  const mdia = mp4Box("mdia", [mdhd, hdlr, minf]);
+  const trak = mp4Box("trak", [tkhd, mdia]);
+  const moov = mp4Box("moov", [mvhd, trak]);
+
+  return new Blob([ftyp, mdat, moov], { type: "video/mp4" });
+}
+
 function initSrtUi() {
   const editor = document.querySelector(".editor");
   const input = document.getElementById("srtInput");
@@ -600,6 +893,7 @@ function initSrtUi() {
   const copyJsonBtn = document.getElementById("copyJsonBtn");
   const copySrtBtn = document.getElementById("copySrtBtn");
   const exportSubtitlePngBtn = document.getElementById("exportSubtitlePngBtn");
+  const exportVideoBtn = document.getElementById("exportVideoBtn");
   const cueCount = document.getElementById("cueCount");
   const totalDuration = document.getElementById("totalDuration");
   const issueCount = document.getElementById("issueCount");
@@ -624,6 +918,7 @@ function initSrtUi() {
   const captionSizeInput = document.getElementById("captionSizeInput");
   const captionColorInput = document.getElementById("captionColorInput");
   const captionBgSelect = document.getElementById("captionBgSelect");
+  const encoderSelect = document.getElementById("encoderSelect");
 
   if (!input || !parseBtn || !cueList) {
     return;
@@ -789,6 +1084,99 @@ function initSrtUi() {
     renderPreview();
   }
 
+  function getCaptionRenderOptions() {
+    return {
+      background: document.documentElement.style.getPropertyValue("--caption-bg").trim(),
+      color: document.documentElement.style.getPropertyValue("--caption-color").trim(),
+      fontSize: Math.max(14, Math.min(96, Number(captionSizeInput?.value) || 30)),
+    };
+  }
+
+  function renderCompositedFrame(targetCanvas, timeMs) {
+    const scratchSubtitleCanvas = document.createElement("canvas");
+    scratchSubtitleCanvas.width = targetCanvas.width;
+    scratchSubtitleCanvas.height = targetCanvas.height;
+
+    drawPreviewFrame(targetCanvas, timeMs);
+
+    const activeText = SRTParser.atTime(parsedCues, timeMs)
+      .map((cue) => cue.text)
+      .filter(Boolean)
+      .join("\n");
+
+    renderSubtitleFrame(scratchSubtitleCanvas, activeText, getCaptionRenderOptions());
+    targetCanvas.getContext("2d").drawImage(scratchSubtitleCanvas, 0, 0);
+  }
+
+  async function pickVideoEncoderConfig(width, height, fps, encoder) {
+    if (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined") {
+      return null;
+    }
+
+    const candidatesByEncoder = {
+      vp9: [{
+        codec: "vp09.00.10.08",
+        width,
+        height,
+        bitrate: 8_000_000,
+        framerate: fps,
+      }],
+      vp8: [{
+        codec: "vp8",
+        width,
+        height,
+        bitrate: 6_000_000,
+        framerate: fps,
+      }],
+      h264: [
+        {
+          codec: "avc1.640028",
+          width,
+          height,
+          bitrate: 8_000_000,
+          framerate: fps,
+          avc: { format: "avc" },
+        },
+        {
+          codec: "avc1.42E01E",
+          width,
+          height,
+          bitrate: 6_000_000,
+          framerate: fps,
+          avc: { format: "avc" },
+        },
+      ],
+      h265: [
+        {
+          codec: "hvc1.1.6.L120.B0",
+          width,
+          height,
+          bitrate: 8_000_000,
+          framerate: fps,
+          hevc: { format: "hevc" },
+        },
+        {
+          codec: "hev1.1.6.L120.B0",
+          width,
+          height,
+          bitrate: 8_000_000,
+          framerate: fps,
+          hevc: { format: "hevc" },
+        },
+      ],
+    };
+    const candidates = candidatesByEncoder[encoder] ?? candidatesByEncoder.vp9;
+
+    for (const config of candidates) {
+      const support = await VideoEncoder.isConfigSupported(config).catch(() => ({ supported: false }));
+      if (support.supported) {
+        return support.config;
+      }
+    }
+
+    return null;
+  }
+
   function exportSubtitlePng() {
     if (!subtitleCanvas || parsedCues.length === 0) {
       return;
@@ -808,6 +1196,190 @@ function initSrtUi() {
       URL.revokeObjectURL(url);
       showToast(toastRegion, "Exported transparent subtitle PNG.");
     }, "image/png");
+  }
+
+  async function exportVideoWithMediaRecorder() {
+    if (parsedCues.length === 0 || !resolutionSelect) {
+      return;
+    }
+
+    if (typeof MediaRecorder === "undefined") {
+      showToast(toastRegion, "Video export is not supported in this browser.", "error");
+      return;
+    }
+
+    const resolution = parseResolution(resolutionSelect.value);
+    const fps = 30;
+    const frameDurationMs = 1000 / fps;
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = resolution.width;
+    exportCanvas.height = resolution.height;
+
+    const stream = exportCanvas.captureStream(fps);
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+      ? "video/webm;codecs=vp9"
+      : "video/webm";
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+    });
+    const chunks = [];
+
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data);
+      }
+    });
+
+    const done = new Promise((resolve) => {
+      recorder.addEventListener("stop", resolve, { once: true });
+    });
+
+    stopPreview();
+    exportVideoBtn.disabled = true;
+    exportVideoBtn.textContent = "Rendering...";
+    showToast(toastRegion, "Rendering video export.");
+
+    recorder.start();
+
+    for (let timeMs = 0; timeMs <= previewDurationMs; timeMs += frameDurationMs) {
+      renderCompositedFrame(exportCanvas, timeMs);
+      await new Promise((resolve) => window.setTimeout(resolve, frameDurationMs));
+    }
+
+    recorder.stop();
+    await done;
+
+    const blob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "caption-render.webm";
+    link.click();
+    URL.revokeObjectURL(url);
+
+    exportVideoBtn.textContent = "Export Video";
+    exportVideoBtn.disabled = parsedCues.length === 0;
+    showToast(toastRegion, "Exported video with rendered subtitles.");
+  }
+
+  async function exportVideoWithWebCodecs() {
+    if (parsedCues.length === 0 || !resolutionSelect) {
+      return false;
+    }
+
+    const resolution = parseResolution(resolutionSelect.value);
+    const fps = 30;
+    const frameDurationMs = 1000 / fps;
+    const frameDurationUs = Math.round(frameDurationMs * 1000);
+    const selectedEncoder = encoderSelect?.value ?? "vp9";
+    const config = await pickVideoEncoderConfig(resolution.width, resolution.height, fps, selectedEncoder);
+
+    if (!config) {
+      return false;
+    }
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = resolution.width;
+    exportCanvas.height = resolution.height;
+
+    const chunks = [];
+    let codecConfig = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, metadata) => {
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+
+        if (metadata?.decoderConfig?.description) {
+          codecConfig = new Uint8Array(metadata.decoderConfig.description);
+        }
+
+        chunks.push({
+          data,
+          keyFrame: chunk.type === "key",
+          timecodeMs: chunk.timestamp / 1000,
+        });
+      },
+      error: (error) => {
+        throw error;
+      },
+    });
+
+    stopPreview();
+    exportVideoBtn.disabled = true;
+    exportVideoBtn.textContent = "Encoding...";
+    showToast(toastRegion, "Encoding video with WebCodecs.");
+
+    encoder.configure(config);
+
+    const frameCount = Math.max(1, Math.ceil(previewDurationMs / frameDurationMs));
+
+    for (let frameIndex = 0; frameIndex <= frameCount; frameIndex += 1) {
+      const timeMs = Math.min(previewDurationMs, frameIndex * frameDurationMs);
+      renderCompositedFrame(exportCanvas, timeMs);
+
+      const frame = new VideoFrame(exportCanvas, {
+        timestamp: Math.round(timeMs * 1000),
+        duration: frameDurationUs,
+      });
+
+      encoder.encode(frame, { keyFrame: frameIndex % (fps * 2) === 0 });
+      frame.close();
+
+      if (encoder.encodeQueueSize > 8) {
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
+    }
+
+    await encoder.flush();
+    encoder.close();
+
+    const isWebM = config.codec === "vp8" || config.codec.startsWith("vp09");
+    const blob = isWebM
+      ? muxWebM({
+        chunks,
+        codec: config.codec,
+        width: resolution.width,
+        height: resolution.height,
+        durationMs: previewDurationMs,
+        fps,
+      })
+      : muxMP4({
+        chunks,
+        codec: config.codec,
+        codecConfig,
+        width: resolution.width,
+        height: resolution.height,
+        fps,
+      });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = isWebM
+      ? "caption-render-fast.webm"
+      : "caption-render-fast.mp4";
+    link.click();
+    URL.revokeObjectURL(url);
+
+    exportVideoBtn.textContent = "Export Video";
+    exportVideoBtn.disabled = parsedCues.length === 0;
+    showToast(toastRegion, isWebM
+      ? "Exported fast WebM video."
+      : "Exported fast MP4 video.");
+    return true;
+  }
+
+  async function exportVideo() {
+    try {
+      const exported = await exportVideoWithWebCodecs();
+      if (!exported) {
+        await exportVideoWithMediaRecorder();
+      }
+    } catch (error) {
+      exportVideoBtn.textContent = "Export Video";
+      exportVideoBtn.disabled = parsedCues.length === 0;
+      showToast(toastRegion, error.message || "Video export failed.", "error");
+    }
   }
 
   function updatePreviewResolution() {
@@ -841,11 +1413,7 @@ function initSrtUi() {
 
     const activeCues = SRTParser.atTime(parsedCues, previewTimeMs);
     const activeText = activeCues.map((cue) => cue.text).filter(Boolean).join("\n");
-    renderSubtitleFrame(subtitleCanvas, activeText, {
-      background: document.documentElement.style.getPropertyValue("--caption-bg").trim(),
-      color: document.documentElement.style.getPropertyValue("--caption-color").trim(),
-      fontSize: Math.max(14, Math.min(96, Number(captionSizeInput?.value) || 30)),
-    });
+    renderSubtitleFrame(subtitleCanvas, activeText, getCaptionRenderOptions());
 
     if (activeCaptionMeta) {
       activeCaptionMeta.textContent = activeCues.length > 0 ? `Cue ${activeCues[0].index}` : "None";
@@ -960,6 +1528,7 @@ function initSrtUi() {
     copyJsonBtn.disabled = cues.length === 0;
     copySrtBtn.disabled = cues.length === 0;
     exportSubtitlePngBtn.disabled = cues.length === 0;
+    exportVideoBtn.disabled = cues.length === 0;
     updatePreviewDuration(cues);
   }
 
@@ -1077,6 +1646,7 @@ function initSrtUi() {
   captionBgSelect.addEventListener("change", applyCaptionStyle);
 
   exportSubtitlePngBtn.addEventListener("click", exportSubtitlePng);
+  exportVideoBtn.addEventListener("click", exportVideo);
 
   copyJsonBtn.addEventListener("click", async () => {
     try {
