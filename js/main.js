@@ -497,6 +497,99 @@ function drawPreviewFrame(canvas, timeMs) {
   context.fillText(SRTParser.formatTimestamp(timeMs), width * 0.035, height * 0.07);
 }
 
+function wrapSubtitleLine(context, line, maxWidth) {
+  const words = line.split(/\s+/);
+  const lines = [];
+  let current = "";
+
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (context.measureText(candidate).width <= maxWidth || !current) {
+      current = candidate;
+      return;
+    }
+
+    lines.push(current);
+    current = word;
+  });
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines;
+}
+
+function roundRectPath(context, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function renderSubtitleFrame(canvas, text, options = {}) {
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const fontSize = options.fontSize ?? Math.round(height * 0.052);
+  const lineHeight = Math.round(fontSize * 1.18);
+  const maxTextWidth = width * 0.84;
+  const bottom = height * 0.11;
+
+  context.clearRect(0, 0, width, height);
+
+  if (!text.trim()) {
+    return;
+  }
+
+  context.font = `800 ${fontSize}px Inter, Arial, sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+
+  const lines = text
+    .split("\n")
+    .flatMap((line) => wrapSubtitleLine(context, line.trim(), maxTextWidth))
+    .filter(Boolean);
+
+  const blockHeight = lines.length * lineHeight;
+  const yStart = height - bottom - blockHeight / 2 + lineHeight / 2;
+
+  if (options.background && options.background !== "rgba(0, 0, 0, 0)") {
+    const widest = Math.min(
+      maxTextWidth,
+      Math.max(...lines.map((line) => context.measureText(line).width)),
+    );
+    const paddingX = fontSize * 0.58;
+    const paddingY = fontSize * 0.28;
+    const boxWidth = widest + paddingX * 2;
+    const boxHeight = blockHeight + paddingY * 2;
+    const boxX = (width - boxWidth) / 2;
+    const boxY = height - bottom - blockHeight - paddingY;
+
+    context.fillStyle = options.background;
+    roundRectPath(context, boxX, boxY, boxWidth, boxHeight, Math.max(2, fontSize * 0.12));
+    context.fill();
+  }
+
+  lines.forEach((line, index) => {
+    const y = yStart + index * lineHeight;
+    context.strokeStyle = "rgba(0, 0, 0, 0.92)";
+    context.lineWidth = Math.max(4, fontSize * 0.16);
+    context.strokeText(line, width / 2, y);
+    context.fillStyle = options.color || "#ffffff";
+    context.fillText(line, width / 2, y);
+  });
+}
+
 function initSrtUi() {
   const editor = document.querySelector(".editor");
   const input = document.getElementById("srtInput");
@@ -506,6 +599,7 @@ function initSrtUi() {
   const clearBtn = document.getElementById("clearBtn");
   const copyJsonBtn = document.getElementById("copyJsonBtn");
   const copySrtBtn = document.getElementById("copySrtBtn");
+  const exportSubtitlePngBtn = document.getElementById("exportSubtitlePngBtn");
   const cueCount = document.getElementById("cueCount");
   const totalDuration = document.getElementById("totalDuration");
   const issueCount = document.getElementById("issueCount");
@@ -515,7 +609,7 @@ function initSrtUi() {
   const previewCanvas = document.getElementById("previewCanvas");
   const stageArea = document.getElementById("stageArea");
   const videoStage = document.getElementById("videoStage");
-  const captionOverlay = document.getElementById("captionOverlay");
+  const subtitleCanvas = document.getElementById("subtitleCanvas");
   const playPreviewBtn = document.getElementById("playPreviewBtn");
   const previewScrubber = document.getElementById("previewScrubber");
   const previewTime = document.getElementById("previewTime");
@@ -692,16 +786,40 @@ function initSrtUi() {
     document.documentElement.style.setProperty("--caption-size", `${size}px`);
     document.documentElement.style.setProperty("--caption-color", color);
     document.documentElement.style.setProperty("--caption-bg", background);
+    renderPreview();
+  }
+
+  function exportSubtitlePng() {
+    if (!subtitleCanvas || parsedCues.length === 0) {
+      return;
+    }
+
+    subtitleCanvas.toBlob((blob) => {
+      if (!blob) {
+        showToast(toastRegion, "Could not render subtitle PNG.", "error");
+        return;
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `subtitle-${SRTParser.formatTimestamp(previewTimeMs).replaceAll(":", "-").replace(",", "-")}.png`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast(toastRegion, "Exported transparent subtitle PNG.");
+    }, "image/png");
   }
 
   function updatePreviewResolution() {
-    if (!previewCanvas || !resolutionSelect) {
+    if (!previewCanvas || !subtitleCanvas || !resolutionSelect) {
       return;
     }
 
     const resolution = parseResolution(resolutionSelect.value);
     previewCanvas.width = resolution.width;
     previewCanvas.height = resolution.height;
+    subtitleCanvas.width = resolution.width;
+    subtitleCanvas.height = resolution.height;
 
     if (videoStage) {
       videoStage.style.aspectRatio = `${resolution.width} / ${resolution.height}`;
@@ -715,7 +833,7 @@ function initSrtUi() {
   }
 
   function renderPreview() {
-    if (!previewCanvas || !captionOverlay) {
+    if (!previewCanvas || !subtitleCanvas) {
       return;
     }
 
@@ -723,7 +841,11 @@ function initSrtUi() {
 
     const activeCues = SRTParser.atTime(parsedCues, previewTimeMs);
     const activeText = activeCues.map((cue) => cue.text).filter(Boolean).join("\n");
-    captionOverlay.textContent = activeText;
+    renderSubtitleFrame(subtitleCanvas, activeText, {
+      background: document.documentElement.style.getPropertyValue("--caption-bg").trim(),
+      color: document.documentElement.style.getPropertyValue("--caption-color").trim(),
+      fontSize: Math.max(14, Math.min(96, Number(captionSizeInput?.value) || 30)),
+    });
 
     if (activeCaptionMeta) {
       activeCaptionMeta.textContent = activeCues.length > 0 ? `Cue ${activeCues[0].index}` : "None";
@@ -837,6 +959,7 @@ function initSrtUi() {
     issueCount.textContent = String(errors.length + warnings.length);
     copyJsonBtn.disabled = cues.length === 0;
     copySrtBtn.disabled = cues.length === 0;
+    exportSubtitlePngBtn.disabled = cues.length === 0;
     updatePreviewDuration(cues);
   }
 
@@ -952,6 +1075,8 @@ function initSrtUi() {
   captionSizeInput.addEventListener("input", applyCaptionStyle);
   captionColorInput.addEventListener("input", applyCaptionStyle);
   captionBgSelect.addEventListener("change", applyCaptionStyle);
+
+  exportSubtitlePngBtn.addEventListener("click", exportSubtitlePng);
 
   copyJsonBtn.addEventListener("click", async () => {
     try {

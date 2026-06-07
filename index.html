@@ -368,34 +368,16 @@
         border-radius: 1px;
       }
 
-      #previewCanvas {
+      #previewCanvas,
+      .subtitle-layer {
         width: 100%;
         height: 100%;
         display: block;
       }
 
-      .caption-overlay {
+      .subtitle-layer {
         position: absolute;
-        left: 8%;
-        right: 8%;
-        bottom: 8%;
-        min-height: 42px;
-        display: grid;
-        place-items: center;
-        padding: 6px 10px;
-        color: var(--caption-color);
-        background: var(--caption-bg);
-        text-align: center;
-        white-space: pre-line;
-        font-size: var(--caption-size);
-        font-weight: 800;
-        line-height: 1.18;
-        text-shadow:
-          0 2px 0 #000000,
-          0 -2px 0 #000000,
-          2px 0 0 #000000,
-          -2px 0 0 #000000,
-          0 5px 18px rgba(0, 0, 0, 0.75);
+        inset: 0;
         pointer-events: none;
       }
 
@@ -740,7 +722,7 @@
             <div class="stage-area" id="stageArea">
               <div class="video-stage" id="videoStage">
                 <canvas id="previewCanvas" width="1280" height="720"></canvas>
-                <div class="caption-overlay" id="captionOverlay"></div>
+                <canvas class="subtitle-layer" id="subtitleCanvas" width="1280" height="720"></canvas>
               </div>
             </div>
             <div class="preview-controls">
@@ -765,6 +747,7 @@
                 <button class="btn" id="sampleBtn" type="button">Load Sample</button>
                 <button class="btn" id="copyJsonBtn" type="button" disabled>Copy JSON</button>
                 <button class="btn" id="copySrtBtn" type="button" disabled>Copy SRT</button>
+                <button class="btn" id="exportSubtitlePngBtn" type="button" disabled>Export PNG</button>
               </div>
             </div>
 
