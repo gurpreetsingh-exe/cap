@@ -1,0 +1,24 @@
+{
+  "name": "cap",
+  "version": "1.0.0",
+  "description": "Browser caption editor and subtitle video exporter.",
+  "type": "module",
+  "private": true,
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --host 127.0.0.1",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mediabunny": "^1.46.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}

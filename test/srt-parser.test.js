@@ -1,28 +1,12 @@
-const assert = require("assert");
-const fs = require("fs");
-const path = require("path");
-const vm = require("vm");
+import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(__dirname, "..");
-const source = fs.readFileSync(path.join(root, "js", "main.js"), "utf8");
-const context = {
-  console,
-  globalThis: {},
-};
+import { SRTParser } from "../src/srt-parser.js";
 
-vm.runInNewContext(source, context, { filename: "js/main.js" });
-
-const { SRTParser } = context.globalThis;
-
-function test(name, fn) {
-  try {
-    fn();
-    console.log(`ok - ${name}`);
-  } catch (error) {
-    console.error(`not ok - ${name}`);
-    throw error;
-  }
-}
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("parses the bundled example file", () => {
   const input = fs.readFileSync(path.join(root, "example.srt"), "utf8");
