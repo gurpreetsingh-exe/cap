@@ -145,12 +145,16 @@ export function initSrtUi() {
   const captionColorInput = document.getElementById("captionColorInput");
   const captionBgSelect = document.getElementById("captionBgSelect");
   const encoderSelect = document.getElementById("encoderSelect");
+  const cueDelayInput = document.getElementById("cueDelayInput");
 
   if (!input || !parseBtn || !cueList) {
     return;
   }
 
+  let sourceCues = [];
   let parsedCues = [];
+  let parseErrors = [];
+  let parseWarnings = [];
   let previewTimeMs = 0;
   let previewDurationMs = 1;
   let previewPlaying = false;
@@ -191,6 +195,36 @@ export function initSrtUi() {
     }
 
     return captionFontsPromise;
+  }
+
+  function getCueDelayMs() {
+    return Math.max(0, Math.min(60_000, Number(cueDelayInput?.value) || 0));
+  }
+
+  function applyCueDelay(cues) {
+    const delayMs = getCueDelayMs();
+
+    if (delayMs === 0) {
+      return cues.map((cue) => ({ ...cue, lines: [...cue.lines] }));
+    }
+
+    return cues.map((cue, index) => {
+      const nextCue = cues[index + 1];
+      const startMs = cue.startMs;
+      const endMs = nextCue
+        ? Math.max(startMs, Math.min(cue.endMs, nextCue.startMs) - delayMs)
+        : cue.endMs;
+
+      return {
+        ...cue,
+        startMs,
+        endMs,
+        durationMs: endMs - startMs,
+        start: SRTParser.formatTimestamp(startMs),
+        end: SRTParser.formatTimestamp(endMs),
+        lines: [...cue.lines],
+      };
+    });
   }
 
   function fitPreviewStage() {
@@ -560,7 +594,9 @@ export function initSrtUi() {
 
   function stopPreview() {
     previewPlaying = false;
-    playPreviewBtn.textContent = "Play";
+    playPreviewBtn.classList.remove("is-playing");
+    playPreviewBtn.setAttribute("aria-label", "Play preview");
+    playPreviewBtn.title = "Play preview";
 
     if (previewAnimation !== null) {
       window.cancelAnimationFrame(previewAnimation);
@@ -599,7 +635,9 @@ export function initSrtUi() {
     previewPlaying = true;
     previewStartedAt = performance.now();
     previewStartedTime = previewTimeMs;
-    playPreviewBtn.textContent = "Pause";
+    playPreviewBtn.classList.add("is-playing");
+    playPreviewBtn.setAttribute("aria-label", "Pause preview");
+    playPreviewBtn.title = "Pause preview";
     previewAnimation = window.requestAnimationFrame(tickPreview);
   }
 
@@ -628,37 +666,44 @@ export function initSrtUi() {
     renderPreview();
   }
 
-  function setParsed(cues, errors = [], warnings = []) {
-    parsedCues = cues;
-    cueList.replaceChildren(...cues.map(createCueElement));
+  function refreshAdjustedCues() {
+    parsedCues = applyCueDelay(sourceCues);
+    cueList.replaceChildren(...parsedCues.map(createCueElement));
     messages.replaceChildren();
 
-    cues.forEach((cue) => {
+    parsedCues.forEach((cue) => {
       if (cue.id) {
         messages.append(createMessage(`Cue ${cue.index} has ID "${cue.id}".`));
       }
     });
 
-    errors.forEach((error) => {
+    parseErrors.forEach((error) => {
       messages.append(createMessage(`Line ${error.startLine}: ${error.message}`, "error"));
     });
 
-    warnings.forEach((warning) => {
+    parseWarnings.forEach((warning) => {
       messages.append(createMessage(`Cue ${warning.cue}: ${warning.message}`, "warning"));
     });
 
-    if (cues.length > 0 && errors.length === 0 && warnings.length === 0) {
+    if (parsedCues.length > 0 && parseErrors.length === 0 && parseWarnings.length === 0) {
       messages.append(createMessage("Parsed successfully with no validation issues."));
     }
 
-    const lastCue = cues.reduce((last, cue) => Math.max(last, cue.endMs), 0);
-    cueCount.textContent = String(cues.length);
+    const lastCue = parsedCues.reduce((last, cue) => Math.max(last, cue.endMs), 0);
+    cueCount.textContent = String(parsedCues.length);
     totalDuration.textContent = formatDuration(lastCue);
-    issueCount.textContent = String(errors.length + warnings.length);
-    copyJsonBtn.disabled = cues.length === 0;
-    copySrtBtn.disabled = cues.length === 0;
+    issueCount.textContent = String(parseErrors.length + parseWarnings.length);
+    copyJsonBtn.disabled = parsedCues.length === 0;
+    copySrtBtn.disabled = parsedCues.length === 0;
     updateFontDependentActions();
-    updatePreviewDuration(cues);
+    updatePreviewDuration(parsedCues);
+  }
+
+  function setParsed(cues, errors = [], warnings = []) {
+    sourceCues = cues;
+    parseErrors = errors;
+    parseWarnings = warnings;
+    refreshAdjustedCues();
   }
 
   function parseInput() {
@@ -802,6 +847,7 @@ export function initSrtUi() {
   captionSizeInput.addEventListener("input", applyCaptionStyle);
   captionColorInput.addEventListener("input", applyCaptionStyle);
   captionBgSelect.addEventListener("change", applyCaptionStyle);
+  cueDelayInput?.addEventListener("input", refreshAdjustedCues);
 
   exportSubtitlePngBtn.addEventListener("click", exportSubtitlePng);
   exportVideoBtn.addEventListener("click", exportVideo);
