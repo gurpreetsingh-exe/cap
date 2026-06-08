@@ -159,6 +159,39 @@ export function initSrtUi() {
   let previewAnimation = null;
   let previewFitAnimation = null;
   let exportPresetRefreshId = 0;
+  let captionFontsReady = false;
+  let captionFontsPromise = null;
+  let timelineScrubbing = false;
+
+  function updateFontDependentActions() {
+    playPreviewBtn.disabled = !captionFontsReady || parsedCues.length === 0;
+    exportSubtitlePngBtn.disabled = !captionFontsReady || parsedCues.length === 0;
+    exportVideoBtn.disabled = !captionFontsReady || parsedCues.length === 0 || encoderSelect?.disabled;
+  }
+
+  function waitForCaptionFonts() {
+    if (!document.fonts) {
+      captionFontsReady = true;
+      updateFontDependentActions();
+      return Promise.resolve();
+    }
+
+    if (!captionFontsPromise) {
+      captionFontsPromise = Promise.all([
+        document.fonts.load("800 34px Manrope"),
+        document.fonts.load("italic 400 38px \"DM Serif Display\""),
+      ])
+        .then(() => document.fonts.ready)
+        .catch(() => undefined)
+        .then(() => {
+          captionFontsReady = true;
+          updateFontDependentActions();
+          renderPreview();
+        });
+    }
+
+    return captionFontsPromise;
+  }
 
   function fitPreviewStage() {
     if (!stageArea || !videoStage || !previewCanvas) {
@@ -286,6 +319,16 @@ export function initSrtUi() {
     renderPreview();
   }
 
+  function getTimelineTime(clientX) {
+    const rect = timelineTrack.getBoundingClientRect();
+    const progress = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    return Math.max(0, Math.min(1, progress)) * previewDurationMs;
+  }
+
+  function scrubTimeline(clientX) {
+    seekPreview(getTimelineTime(clientX));
+  }
+
   function renderTimeline(cues) {
     if (!timelineTrack || !timelinePlayhead) {
       return;
@@ -373,7 +416,7 @@ export function initSrtUi() {
     encoderSelect.disabled = supportedIds.length === 0;
 
     if (exportVideoBtn) {
-      exportVideoBtn.disabled = parsedCues.length === 0 || supportedIds.length === 0;
+      exportVideoBtn.disabled = !captionFontsReady || parsedCues.length === 0 || supportedIds.length === 0;
     }
   }
 
@@ -398,10 +441,13 @@ export function initSrtUi() {
     targetCanvas.getContext("2d").drawImage(scratchSubtitleCanvas, 0, 0);
   }
 
-  function exportSubtitlePng() {
+  async function exportSubtitlePng() {
     if (!subtitleCanvas || parsedCues.length === 0) {
       return;
     }
+
+    await waitForCaptionFonts();
+    renderPreview();
 
     subtitleCanvas.toBlob((blob) => {
       if (!blob) {
@@ -426,6 +472,7 @@ export function initSrtUi() {
 
     try {
       stopPreview();
+      await waitForCaptionFonts();
       exportVideoBtn.disabled = true;
       exportVideoBtn.textContent = "Encoding...";
       showToast(toastRegion, "Encoding video export.");
@@ -444,7 +491,7 @@ export function initSrtUi() {
       showToast(toastRegion, error.message || "Video export failed.", "error");
     } finally {
       exportVideoBtn.textContent = "Export Video";
-      exportVideoBtn.disabled = parsedCues.length === 0;
+      updateFontDependentActions();
     }
   }
 
@@ -477,14 +524,22 @@ export function initSrtUi() {
     }
 
     drawPreviewFrame(previewCanvas, previewTimeMs);
+    const subtitleContext = subtitleCanvas.getContext("2d");
+
+    if (!captionFontsReady) {
+      subtitleContext.clearRect(0, 0, subtitleCanvas.width, subtitleCanvas.height);
+    }
 
     const activeCues = SRTParser.atTime(parsedCues, previewTimeMs);
     const activeText = activeCues.map((cue) => cue.text).filter(Boolean).join("\n");
     const primaryCue = activeCues[0];
-    renderSubtitleFrame(subtitleCanvas, activeText, {
-      ...getCaptionRenderOptions(),
-      progress: primaryCue ? (previewTimeMs - primaryCue.startMs) / Math.max(1, primaryCue.durationMs) : 0,
-    });
+
+    if (captionFontsReady) {
+      renderSubtitleFrame(subtitleCanvas, activeText, {
+        ...getCaptionRenderOptions(),
+        progress: primaryCue ? (previewTimeMs - primaryCue.startMs) / Math.max(1, primaryCue.durationMs) : 0,
+      });
+    }
 
     if (activeCaptionMeta) {
       activeCaptionMeta.textContent = activeCues.length > 0 ? `Cue ${activeCues[0].index}` : "None";
@@ -527,11 +582,15 @@ export function initSrtUi() {
     previewAnimation = window.requestAnimationFrame(tickPreview);
   }
 
-  function playPreview() {
+  async function playPreview() {
     if (parsedCues.length === 0) {
       showToast(toastRegion, "Parse subtitles before previewing.", "error");
       return;
     }
+
+    playPreviewBtn.disabled = true;
+    await waitForCaptionFonts();
+    playPreviewBtn.disabled = false;
 
     if (previewTimeMs >= previewDurationMs) {
       previewTimeMs = 0;
@@ -598,8 +657,7 @@ export function initSrtUi() {
     issueCount.textContent = String(errors.length + warnings.length);
     copyJsonBtn.disabled = cues.length === 0;
     copySrtBtn.disabled = cues.length === 0;
-    exportSubtitlePngBtn.disabled = cues.length === 0;
-    exportVideoBtn.disabled = cues.length === 0 || encoderSelect?.disabled;
+    updateFontDependentActions();
     updatePreviewDuration(cues);
   }
 
@@ -700,16 +758,45 @@ export function initSrtUi() {
     }
   });
 
-  timelineTrack.addEventListener("click", (event) => {
-    const cueElement = event.target.closest(".timeline-cue");
-    if (cueElement) {
-      seekPreview(Number(cueElement.dataset.startMs));
+  timelineTrack.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
       return;
     }
 
-    const rect = timelineTrack.getBoundingClientRect();
-    const progress = (event.clientX - rect.left) / rect.width;
-    seekPreview(progress * previewDurationMs);
+    event.preventDefault();
+    timelineScrubbing = true;
+    timelineTrack.setPointerCapture(event.pointerId);
+    timelineTrack.classList.add("scrubbing");
+    scrubTimeline(event.clientX);
+  });
+
+  timelineTrack.addEventListener("pointermove", (event) => {
+    if (!timelineScrubbing) {
+      return;
+    }
+
+    event.preventDefault();
+    scrubTimeline(event.clientX);
+  });
+
+  function stopTimelineScrub(event) {
+    if (!timelineScrubbing) {
+      return;
+    }
+
+    timelineScrubbing = false;
+    timelineTrack.classList.remove("scrubbing");
+
+    if (timelineTrack.hasPointerCapture(event.pointerId)) {
+      timelineTrack.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  timelineTrack.addEventListener("pointerup", stopTimelineScrub);
+  timelineTrack.addEventListener("pointercancel", stopTimelineScrub);
+  timelineTrack.addEventListener("lostpointercapture", () => {
+    timelineScrubbing = false;
+    timelineTrack.classList.remove("scrubbing");
   });
 
   captionSizeInput.addEventListener("input", applyCaptionStyle);
@@ -740,14 +827,10 @@ export function initSrtUi() {
   input.value = sampleSrt;
   applyCaptionStyle();
   initPanelResizers();
+  updateFontDependentActions();
+  waitForCaptionFonts();
   refreshVideoExportPresets();
   updatePreviewResolution();
   parseInput();
   schedulePreviewFit();
-
-  if (document.fonts?.ready) {
-    document.fonts.ready.then(() => {
-      renderPreview();
-    });
-  }
 }

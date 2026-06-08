@@ -6,7 +6,7 @@
     <title>Caption Editor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Serif+Display:ital@0;1&family=Inter+Tight:wght@800;900&family=Manrope:wght@500;700;800&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Serif+Display:ital@0;1&family=Inter+Tight:wght@800;900&family=Manrope:wght@500;700;800&family=Montserrat:wght@800;900&display=block" rel="stylesheet">
     <style>
       :root {
         color-scheme: dark;
@@ -52,6 +52,8 @@
         border: 0;
         border-radius: 2px;
         cursor: pointer;
+        -webkit-user-select: none;
+        user-select: none;
       }
 
       button:disabled {
@@ -67,6 +69,19 @@
         width: 100vw;
         height: 100vh;
         overflow: hidden;
+      }
+
+      .editor,
+      .toast-region {
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      textarea,
+      input[type="text"],
+      input[type="number"] {
+        -webkit-user-select: text;
+        user-select: text;
       }
 
       .toolbar,
@@ -274,6 +289,8 @@
         gap: 7px;
         padding: 7px 0;
         border-bottom: 1px solid #2a2c30;
+        -webkit-user-select: none;
+        user-select: none;
       }
 
       .cue.active .cue-index,
@@ -563,11 +580,17 @@
         position: relative;
         overflow: hidden;
         min-height: 76px;
+        cursor: ew-resize;
+        touch-action: none;
         background:
           repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 64px),
           #15161a;
         border: 1px solid var(--line);
         border-radius: 2px;
+      }
+
+      .timeline-track.scrubbing {
+        border-color: rgba(213, 155, 53, 0.72);
       }
 
       .timeline-cue {
@@ -584,6 +607,9 @@
         white-space: nowrap;
         text-overflow: ellipsis;
         font-size: 10px;
+        -webkit-user-select: none;
+        user-select: none;
+        pointer-events: none;
       }
 
       .timeline-playhead {
