@@ -109,6 +109,21 @@ function parseResolution(value) {
   };
 }
 
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+}
+
+function sanitizeFilename(value) {
+  return String(value || "caption-project")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase() || "caption-project";
+}
+
 export function initSrtUi() {
   const editor = document.querySelector(".editor");
   const input = document.getElementById("srtInput");
@@ -133,7 +148,13 @@ export function initSrtUi() {
   const playPreviewBtn = document.getElementById("playPreviewBtn");
   const previewScrubber = document.getElementById("previewScrubber");
   const previewTime = document.getElementById("previewTime");
+  const projectNameInput = document.getElementById("projectName");
+  const projectMenu = document.getElementById("projectMenu");
   const resolutionSelect = document.getElementById("resolutionSelect");
+  const customWidthInput = document.getElementById("customWidthInput");
+  const customHeightInput = document.getElementById("customHeightInput");
+  const fpsInput = document.getElementById("fpsInput");
+  const fpsMeta = document.getElementById("fpsMeta");
   const activeCaptionMeta = document.getElementById("activeCaptionMeta");
   const resolutionMeta = document.getElementById("resolutionMeta");
   const renderLengthMeta = document.getElementById("renderLengthMeta");
@@ -199,6 +220,37 @@ export function initSrtUi() {
 
   function getCueDelayMs() {
     return Math.max(0, Math.min(60_000, Number(cueDelayInput?.value) || 0));
+  }
+
+  function getExportFps() {
+    return Math.round(clampNumber(fpsInput?.value, 1, 120, 30));
+  }
+
+  function getProjectResolution() {
+    if (resolutionSelect?.value === "custom") {
+      return {
+        width: Math.round(clampNumber(customWidthInput?.value, 16, 7680, 1280)),
+        height: Math.round(clampNumber(customHeightInput?.value, 16, 4320, 720)),
+      };
+    }
+
+    return parseResolution(resolutionSelect?.value || "1280x720");
+  }
+
+  function updateProjectSettingsState() {
+    const isCustomResolution = resolutionSelect?.value === "custom";
+
+    if (customWidthInput) {
+      customWidthInput.disabled = !isCustomResolution;
+    }
+
+    if (customHeightInput) {
+      customHeightInput.disabled = !isCustomResolution;
+    }
+
+    if (fpsMeta) {
+      fpsMeta.textContent = `${getExportFps()} fps`;
+    }
   }
 
   function applyCueDelay(cues) {
@@ -403,7 +455,7 @@ export function initSrtUi() {
 
     const refreshId = ++exportPresetRefreshId;
     const previousValue = encoderSelect.value;
-    const resolution = parseResolution(resolutionSelect.value);
+    const resolution = getProjectResolution();
     encoderSelect.disabled = true;
 
     const supportEntries = await Promise.all(VIDEO_EXPORT_PRESETS.map(async (preset) => ({
@@ -495,11 +547,12 @@ export function initSrtUi() {
   }
 
   async function exportVideo() {
-    if (parsedCues.length === 0 || !resolutionSelect) {
+    if (parsedCues.length === 0) {
       return;
     }
 
-    const resolution = parseResolution(resolutionSelect.value);
+    const resolution = getProjectResolution();
+    const fps = getExportFps();
     const exportCanvas = document.createElement("canvas");
     exportCanvas.width = resolution.width;
     exportCanvas.height = resolution.height;
@@ -514,12 +567,13 @@ export function initSrtUi() {
       const result = await encodeCanvasVideo({
         canvas: exportCanvas,
         durationMs: previewDurationMs,
-        fps: 30,
+        fps,
         encoder: encoderSelect?.value ?? "vp9",
         renderFrame: renderCompositedFrame,
       });
 
-      downloadBlob(result.blob, result.filename);
+      const filename = `${sanitizeFilename(projectNameInput?.value)}-${resolution.width}x${resolution.height}-${fps}fps.${result.extension}`;
+      downloadBlob(result.blob, filename);
       showToast(toastRegion, `Exported ${result.extension.toUpperCase()} video.`);
     } catch (error) {
       showToast(toastRegion, error.message || "Video export failed.", "error");
@@ -530,11 +584,12 @@ export function initSrtUi() {
   }
 
   function updatePreviewResolution() {
-    if (!previewCanvas || !subtitleCanvas || !resolutionSelect) {
+    if (!previewCanvas || !subtitleCanvas) {
       return;
     }
 
-    const resolution = parseResolution(resolutionSelect.value);
+    updateProjectSettingsState();
+    const resolution = getProjectResolution();
     previewCanvas.width = resolution.width;
     previewCanvas.height = resolution.height;
     subtitleCanvas.width = resolution.width;
@@ -764,6 +819,17 @@ export function initSrtUi() {
   });
 
   resolutionSelect.addEventListener("change", updatePreviewResolution);
+  customWidthInput?.addEventListener("input", updatePreviewResolution);
+  customHeightInput?.addEventListener("input", updatePreviewResolution);
+  fpsInput?.addEventListener("input", () => {
+    updateProjectSettingsState();
+  });
+
+  document.addEventListener("click", (event) => {
+    if (projectMenu?.open && !projectMenu.contains(event.target)) {
+      projectMenu.open = false;
+    }
+  });
 
   window.addEventListener("resize", () => {
     schedulePreviewFit();

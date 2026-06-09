@@ -68,7 +68,89 @@
       .app {
         width: 100vw;
         height: 100vh;
+        display: flex;
+        flex-direction: column;
         overflow: hidden;
+      }
+
+      .title-bar {
+        min-height: 38px;
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 7px;
+        background: #1c1d20;
+        border-bottom: 1px solid #111214;
+      }
+
+      .project-name-field {
+        min-width: 0;
+        height: 26px;
+        padding: 0 8px;
+        color: var(--text);
+        background: #141518;
+        border: 1px solid var(--line-soft);
+        border-radius: 2px;
+        outline: none;
+        font-weight: 750;
+      }
+
+      .project-name-field:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(213, 155, 53, 0.38);
+      }
+
+      .project-menu {
+        position: relative;
+      }
+
+      .project-menu summary {
+        list-style: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      .project-menu summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .project-menu[open] summary {
+        border-color: var(--accent);
+      }
+
+      .project-menu-panel {
+        position: absolute;
+        z-index: 30;
+        top: calc(100% + 6px);
+        right: 0;
+        width: min(320px, calc(100vw - 16px));
+        display: grid;
+        gap: 8px;
+        padding: 8px;
+        background: rgba(32, 33, 36, 0.98);
+        border: 1px solid var(--line);
+        border-radius: 2px;
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.42);
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      .settings-icon {
+        width: 15px;
+        height: 15px;
+        display: block;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+      }
+
+      .menu-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
       }
 
       .editor,
@@ -154,7 +236,8 @@
       }
 
       .editor {
-        height: 100%;
+        flex: 1;
+        height: auto;
         min-height: 0;
         display: grid;
         grid-template-columns: minmax(240px, var(--captions-width, 340px)) 4px minmax(360px, 1fr) 4px minmax(230px, var(--properties-width, 300px));
@@ -438,13 +521,46 @@
 
       .preview-controls {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-columns: auto minmax(0, 1fr);
         align-items: center;
         gap: 8px;
         height: 32px;
         padding: 3px 6px;
         background: #191a1e;
         border-top: 1px solid #111214;
+      }
+
+      .status-bar {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 24px;
+        padding: 0 7px;
+        background: #15161a;
+        border-top: 1px solid #111214;
+        overflow: hidden;
+        flex: 0 0 auto;
+      }
+
+      .status-item {
+        min-width: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--muted);
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .status-label {
+        color: #676c75;
+      }
+
+      .status-item .time-label {
+        min-width: auto;
+        text-align: left;
       }
 
       .time-label {
@@ -469,6 +585,8 @@
         border-radius: 2px;
         outline: none;
         font-size: 11px;
+        -webkit-user-select: none;
+        user-select: none;
       }
 
       .properties-scroll {
@@ -491,6 +609,8 @@
         background: var(--panel-soft);
         border: 1px solid var(--line-soft);
         border-radius: 2px;
+        -webkit-user-select: none;
+        user-select: none;
       }
 
       .stat {
@@ -527,7 +647,7 @@
 
       .property-group {
         display: grid;
-        gap: 7px;
+        gap: 1px;
         padding: 7px;
         margin-top: 6px;
       }
@@ -544,6 +664,23 @@
         gap: 4px;
       }
 
+      .settings-field {
+        min-height: 28px;
+        display: grid;
+        grid-template-columns: minmax(82px, 0.72fr) minmax(0, 1fr);
+        gap: 8px;
+        align-items: center;
+      }
+
+      .settings-field span {
+        margin-top: 0;
+      }
+
+      .settings-field .select,
+      .settings-field input {
+        min-width: 0;
+      }
+
       .action-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -555,7 +692,8 @@
       }
 
       .field input[type="number"],
-      .field input[type="color"] {
+      .field input[type="color"],
+      .field input[type="text"] {
         width: 100%;
         min-height: 24px;
         color: var(--text);
@@ -566,6 +704,12 @@
       }
 
       .field input[type="number"] {
+        padding: 0 7px;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+
+      .field input[type="text"] {
         padding: 0 7px;
       }
 
@@ -720,6 +864,15 @@
       }
 
       @media (max-width: 760px) {
+        .title-bar {
+          grid-template-columns: 1fr;
+        }
+
+        .project-menu-panel {
+          left: 0;
+          right: auto;
+        }
+
         .editor {
           grid-template-columns: 1fr;
           grid-template-rows: auto auto auto 178px;
@@ -732,6 +885,13 @@
 
         .preview-controls {
           grid-template-columns: 1fr;
+        }
+
+        .status-bar {
+          flex-wrap: wrap;
+          height: auto;
+          min-height: 24px;
+          padding-block: 4px;
         }
 
         .action-grid {
@@ -752,6 +912,43 @@
   </head>
   <body>
     <main class="app">
+      <header class="title-bar" id="titleBar">
+        <input class="project-name-field" id="projectName" type="text" value="Caption Project" aria-label="Project name">
+        <details class="project-menu" id="projectMenu">
+          <summary class="btn icon-btn" aria-label="Project settings" title="Project settings">
+            <svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </summary>
+          <div class="project-menu-panel">
+            <label class="field settings-field">
+              <span>Resolution</span>
+              <select class="select" id="resolutionSelect" aria-label="Preview resolution">
+                <option value="1280x720">1280 x 720</option>
+                <option value="1920x1080">1920 x 1080</option>
+                <option value="1080x1080">1080 x 1080</option>
+                <option value="1080x1920">1080 x 1920</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div class="menu-grid">
+              <label class="field">
+                <span>Custom Width</span>
+                <input id="customWidthInput" type="number" min="16" max="7680" step="2" value="1280" disabled>
+              </label>
+              <label class="field">
+                <span>Custom Height</span>
+                <input id="customHeightInput" type="number" min="16" max="4320" step="2" value="720" disabled>
+              </label>
+            </div>
+            <label class="field">
+              <span>FPS</span>
+              <input id="fpsInput" type="number" min="1" max="120" step="1" value="30">
+            </label>
+          </div>
+        </details>
+      </header>
       <section class="editor">
         <aside class="panel caption-panel">
           <div class="panel-head">
@@ -774,12 +971,7 @@
           <div class="panel-head">
             <h2 class="panel-title">Video Preview</h2>
             <div class="preview-actions">
-              <select class="select" id="resolutionSelect" aria-label="Preview resolution">
-                <option value="1280x720">1280 x 720</option>
-                <option value="1920x1080">1920 x 1080</option>
-                <option value="1080x1080">1080 x 1080</option>
-                <option value="1080x1920">1080 x 1920</option>
-              </select>
+              <span class="pill" id="fpsMeta">30 fps</span>
             </div>
           </div>
           <div class="preview-body">
@@ -795,7 +987,6 @@
                 <span class="pause-icon" aria-hidden="true"></span>
               </button>
               <input class="range" id="previewScrubber" type="range" min="0" max="1" step="1" value="0" aria-label="Preview timeline">
-              <span class="time-label" id="previewTime">00:00:00,000</span>
             </div>
           </div>
         </section>
@@ -809,13 +1000,13 @@
           <div class="properties-scroll">
             <div class="property-group">
               <h3 class="property-title">Project</h3>
-              <label class="field">
+              <label class="field settings-field">
                 <span>Video Export</span>
                 <select class="select" id="encoderSelect">
                   <option value="mp4-avc">MP4 H.264</option>
                 </select>
               </label>
-              <label class="field">
+              <label class="field settings-field">
                 <span>Cue Gap (ms)</span>
                 <input id="cueDelayInput" type="number" min="0" max="60000" step="100" value="0">
               </label>
@@ -899,6 +1090,12 @@
           </div>
         </section>
       </section>
+      <footer class="status-bar" aria-label="Application status">
+        <span class="status-item">
+          <span class="status-label">Time</span>
+          <span class="time-label" id="previewTime">00:00:00,000</span>
+        </span>
+      </footer>
     </main>
     <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
 

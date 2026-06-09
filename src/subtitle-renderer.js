@@ -1,16 +1,10 @@
-import { SRTParser } from "./srt-parser.js";
-
-export function drawPreviewFrame(canvas, timeMs) {
+export function drawPreviewFrame(canvas) {
   const context = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
 
   context.fillStyle = "#111";
   context.fillRect(0, 0, width, height);
-
-  context.fillStyle = "rgba(255, 255, 255, 0.72)";
-  context.font = `${Math.max(14, Math.round(width * 0.018))}px sans-serif`;
-  context.fillText(SRTParser.formatTimestamp(timeMs), width * 0.035, height * 0.07);
 }
 
 function roundRectPath(context, x, y, width, height, radius) {
