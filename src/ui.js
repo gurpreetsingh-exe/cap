@@ -9,6 +9,8 @@ import {
   getBestVideoExportPresetId,
 } from "./video-export.js";
 
+const SESSION_SETTINGS_KEY = "caption-editor:settings:v1";
+
 function formatDuration(milliseconds) {
   const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -187,6 +189,102 @@ export function initSrtUi() {
   let captionFontsReady = false;
   let captionFontsPromise = null;
   let timelineScrubbing = false;
+  let pendingExportPresetId = null;
+
+  function readSessionSettings() {
+    try {
+      return JSON.parse(sessionStorage.getItem(SESSION_SETTINGS_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function writeSessionSettings(settings) {
+    try {
+      sessionStorage.setItem(SESSION_SETTINGS_KEY, JSON.stringify(settings));
+    } catch {
+      // Session storage may be unavailable in some browser modes.
+    }
+  }
+
+  function saveSessionSettings() {
+    writeSessionSettings({
+      projectName: projectNameInput?.value,
+      resolution: resolutionSelect?.value,
+      customWidth: customWidthInput?.value,
+      customHeight: customHeightInput?.value,
+      fps: fpsInput?.value,
+      exportPreset: encoderSelect?.value,
+      cueGap: cueDelayInput?.value,
+      captionSize: captionSizeInput?.value,
+      captionColor: captionColorInput?.value,
+      captionBackground: captionBgSelect?.value,
+      layout: {
+        captionsWidth: editor?.style.getPropertyValue("--captions-width"),
+        propertiesWidth: editor?.style.getPropertyValue("--properties-width"),
+        timelineHeight: editor?.style.getPropertyValue("--timeline-height"),
+      },
+    });
+  }
+
+  function restoreSessionSettings() {
+    const settings = readSessionSettings();
+
+    if (projectNameInput && typeof settings.projectName === "string") {
+      projectNameInput.value = settings.projectName;
+    }
+
+    if (resolutionSelect && typeof settings.resolution === "string") {
+      resolutionSelect.value = settings.resolution;
+    }
+
+    if (customWidthInput && settings.customWidth !== undefined) {
+      customWidthInput.value = settings.customWidth;
+    }
+
+    if (customHeightInput && settings.customHeight !== undefined) {
+      customHeightInput.value = settings.customHeight;
+    }
+
+    if (fpsInput && settings.fps !== undefined) {
+      fpsInput.value = settings.fps;
+    }
+
+    if (encoderSelect && typeof settings.exportPreset === "string") {
+      pendingExportPresetId = settings.exportPreset;
+      encoderSelect.value = settings.exportPreset;
+    }
+
+    if (cueDelayInput && settings.cueGap !== undefined) {
+      cueDelayInput.value = settings.cueGap;
+    }
+
+    if (captionSizeInput && settings.captionSize !== undefined) {
+      captionSizeInput.value = settings.captionSize;
+    }
+
+    if (captionColorInput && typeof settings.captionColor === "string") {
+      captionColorInput.value = settings.captionColor;
+    }
+
+    if (captionBgSelect && typeof settings.captionBackground === "string") {
+      captionBgSelect.value = settings.captionBackground;
+    }
+
+    if (editor && settings.layout) {
+      if (settings.layout.captionsWidth) {
+        editor.style.setProperty("--captions-width", settings.layout.captionsWidth);
+      }
+
+      if (settings.layout.propertiesWidth) {
+        editor.style.setProperty("--properties-width", settings.layout.propertiesWidth);
+      }
+
+      if (settings.layout.timelineHeight) {
+        editor.style.setProperty("--timeline-height", settings.layout.timelineHeight);
+      }
+    }
+  }
 
   function updateFontDependentActions() {
     playPreviewBtn.disabled = !captionFontsReady || parsedCues.length === 0;
@@ -369,6 +467,7 @@ export function initSrtUi() {
           splitter.removeEventListener("pointermove", onPointerMove);
           splitter.removeEventListener("pointerup", onPointerUp);
           splitter.removeEventListener("pointercancel", onPointerUp);
+          saveSessionSettings();
         }
 
         splitter.addEventListener("pointermove", onPointerMove);
@@ -437,6 +536,7 @@ export function initSrtUi() {
     document.documentElement.style.setProperty("--caption-size", `${size}px`);
     document.documentElement.style.setProperty("--caption-color", color);
     document.documentElement.style.setProperty("--caption-bg", background);
+    saveSessionSettings();
     renderPreview();
   }
 
@@ -454,7 +554,8 @@ export function initSrtUi() {
     }
 
     const refreshId = ++exportPresetRefreshId;
-    const previousValue = encoderSelect.value;
+    const previousValue = pendingExportPresetId || encoderSelect.value;
+    pendingExportPresetId = null;
     const resolution = getProjectResolution();
     encoderSelect.disabled = true;
 
@@ -500,6 +601,7 @@ export function initSrtUi() {
     encoderSelect.replaceChildren(...children);
     encoderSelect.value = nextValue;
     encoderSelect.disabled = supportedIds.length === 0;
+    saveSessionSettings();
 
     if (exportVideoBtn) {
       exportVideoBtn.disabled = !captionFontsReady || parsedCues.length === 0 || supportedIds.length === 0;
@@ -605,6 +707,7 @@ export function initSrtUi() {
 
     schedulePreviewFit();
     refreshVideoExportPresets();
+    saveSessionSettings();
   }
 
   function renderPreview() {
@@ -823,7 +926,10 @@ export function initSrtUi() {
   customHeightInput?.addEventListener("input", updatePreviewResolution);
   fpsInput?.addEventListener("input", () => {
     updateProjectSettingsState();
+    saveSessionSettings();
   });
+  projectNameInput?.addEventListener("input", saveSessionSettings);
+  encoderSelect?.addEventListener("change", saveSessionSettings);
 
   document.addEventListener("click", (event) => {
     if (projectMenu?.open && !projectMenu.contains(event.target)) {
@@ -913,7 +1019,10 @@ export function initSrtUi() {
   captionSizeInput.addEventListener("input", applyCaptionStyle);
   captionColorInput.addEventListener("input", applyCaptionStyle);
   captionBgSelect.addEventListener("change", applyCaptionStyle);
-  cueDelayInput?.addEventListener("input", refreshAdjustedCues);
+  cueDelayInput?.addEventListener("input", () => {
+    refreshAdjustedCues();
+    saveSessionSettings();
+  });
 
   exportSubtitlePngBtn.addEventListener("click", exportSubtitlePng);
   exportVideoBtn.addEventListener("click", exportVideo);
@@ -936,6 +1045,7 @@ export function initSrtUi() {
     }
   });
 
+  restoreSessionSettings();
   input.value = sampleSrt;
   applyCaptionStyle();
   initPanelResizers();
