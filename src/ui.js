@@ -169,6 +169,9 @@ export function initSrtUi() {
   const captionBgSelect = document.getElementById("captionBgSelect");
   const encoderSelect = document.getElementById("encoderSelect");
   const cueDelayInput = document.getElementById("cueDelayInput");
+  const backgroundVideoInput = document.getElementById("backgroundVideoInput");
+  const clearBackgroundVideoBtn = document.getElementById("clearBackgroundVideoBtn");
+  const videoLayerTrack = document.getElementById("videoLayerTrack");
 
   if (!input || !parseBtn || !cueList) {
     return;
@@ -190,6 +193,12 @@ export function initSrtUi() {
   let captionFontsPromise = null;
   let timelineScrubbing = false;
   let pendingExportPresetId = null;
+  let backgroundVideo = null;
+  let backgroundVideoSeekToken = 0;
+
+  function hasTimelineContent() {
+    return parsedCues.length > 0 || Boolean(backgroundVideo);
+  }
 
   function readSessionSettings() {
     try {
@@ -287,9 +296,9 @@ export function initSrtUi() {
   }
 
   function updateFontDependentActions() {
-    playPreviewBtn.disabled = !captionFontsReady || parsedCues.length === 0;
+    playPreviewBtn.disabled = !captionFontsReady || !hasTimelineContent();
     exportSubtitlePngBtn.disabled = !captionFontsReady || parsedCues.length === 0;
-    exportVideoBtn.disabled = !captionFontsReady || parsedCues.length === 0 || encoderSelect?.disabled;
+    exportVideoBtn.disabled = !captionFontsReady || !hasTimelineContent() || encoderSelect?.disabled;
   }
 
   function waitForCaptionFonts() {
@@ -375,6 +384,135 @@ export function initSrtUi() {
         lines: [...cue.lines],
       };
     });
+  }
+
+  function getBackgroundVideoDurationMs() {
+    return backgroundVideo ? Math.round(backgroundVideo.duration * 1000) : 0;
+  }
+
+  function drawVideoCover(context, video, width, height) {
+    const videoWidth = video.videoWidth || width;
+    const videoHeight = video.videoHeight || height;
+    const scale = Math.max(width / videoWidth, height / videoHeight);
+    const drawWidth = videoWidth * scale;
+    const drawHeight = videoHeight * scale;
+    const dx = (width - drawWidth) / 2;
+    const dy = (height - drawHeight) / 2;
+    context.drawImage(video, dx, dy, drawWidth, drawHeight);
+  }
+
+  function drawBackgroundFrame(canvas) {
+    const context = canvas.getContext("2d");
+    drawPreviewFrame(canvas);
+
+    if (backgroundVideo?.element?.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      drawVideoCover(context, backgroundVideo.element, canvas.width, canvas.height);
+    }
+  }
+
+  function seekBackgroundVideo(timeMs) {
+    if (!backgroundVideo) {
+      return Promise.resolve();
+    }
+
+    const video = backgroundVideo.element;
+    const targetSeconds = Math.min(backgroundVideo.duration, Math.max(0, timeMs / 1000));
+
+    if (Math.abs(video.currentTime - targetSeconds) < 0.025 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return Promise.resolve();
+    }
+
+    const seekToken = ++backgroundVideoSeekToken;
+    return new Promise((resolve) => {
+      const done = () => {
+        video.removeEventListener("seeked", done);
+        video.removeEventListener("error", done);
+        resolve();
+      };
+
+      video.addEventListener("seeked", done, { once: true });
+      video.addEventListener("error", done, { once: true });
+      video.currentTime = targetSeconds;
+
+      window.setTimeout(() => {
+        if (seekToken === backgroundVideoSeekToken) {
+          done();
+        }
+      }, 500);
+    });
+  }
+
+  function updateBackgroundLayerTrack() {
+    if (!videoLayerTrack) {
+      return;
+    }
+
+    if (!backgroundVideo || previewDurationMs <= 0) {
+      videoLayerTrack.hidden = true;
+      return;
+    }
+
+    const width = Math.min(100, (getBackgroundVideoDurationMs() / previewDurationMs) * 100);
+    videoLayerTrack.hidden = false;
+    videoLayerTrack.style.width = `${Math.max(1.4, width)}%`;
+    videoLayerTrack.textContent = backgroundVideo.name;
+    videoLayerTrack.title = `${backgroundVideo.name} (${formatDuration(getBackgroundVideoDurationMs())})`;
+  }
+
+  function clearBackgroundVideo(options = {}) {
+    if (backgroundVideo) {
+      backgroundVideo.element.pause();
+      URL.revokeObjectURL(backgroundVideo.url);
+      backgroundVideo = null;
+    }
+
+    if (backgroundVideoInput && !options.keepInput) {
+      backgroundVideoInput.value = "";
+    }
+
+    if (clearBackgroundVideoBtn) {
+      clearBackgroundVideoBtn.disabled = true;
+    }
+
+    stopPreview();
+    updatePreviewDuration(parsedCues);
+  }
+
+  function loadBackgroundVideo(file) {
+    clearBackgroundVideo({ keepInput: true });
+
+    if (!file) {
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+
+    video.addEventListener("loadedmetadata", () => {
+      backgroundVideo = {
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+        element: video,
+        name: file.name,
+        url,
+      };
+
+      if (clearBackgroundVideoBtn) {
+        clearBackgroundVideoBtn.disabled = false;
+      }
+
+      updatePreviewDuration(parsedCues);
+      seekBackgroundVideo(previewTimeMs).then(renderPreview);
+      showToast(toastRegion, "Imported background video.");
+    }, { once: true });
+
+    video.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      showToast(toastRegion, "Could not load background video.", "error");
+    }, { once: true });
   }
 
   function fitPreviewStage() {
@@ -502,6 +640,10 @@ export function initSrtUi() {
     }
 
     renderPreview();
+
+    if (!previewPlaying) {
+      seekBackgroundVideo(previewTimeMs).then(renderPreview);
+    }
   }
 
   function getTimelineTime(clientX) {
@@ -520,7 +662,8 @@ export function initSrtUi() {
     }
 
     const items = cues.map((cue) => createTimelineCue(cue, previewDurationMs));
-    timelineTrack.replaceChildren(...items, timelinePlayhead);
+    timelineTrack.replaceChildren(...(videoLayerTrack ? [videoLayerTrack] : []), ...items, timelinePlayhead);
+    updateBackgroundLayerTrack();
     updatePlayhead();
   }
 
@@ -604,16 +747,17 @@ export function initSrtUi() {
     saveSessionSettings();
 
     if (exportVideoBtn) {
-      exportVideoBtn.disabled = !captionFontsReady || parsedCues.length === 0 || supportedIds.length === 0;
+      exportVideoBtn.disabled = !captionFontsReady || !hasTimelineContent() || supportedIds.length === 0;
     }
   }
 
-  function renderCompositedFrame(targetCanvas, timeMs) {
+  async function renderCompositedFrame(targetCanvas, timeMs) {
     const scratchSubtitleCanvas = document.createElement("canvas");
     scratchSubtitleCanvas.width = targetCanvas.width;
     scratchSubtitleCanvas.height = targetCanvas.height;
 
-    drawPreviewFrame(targetCanvas, timeMs);
+    await seekBackgroundVideo(timeMs);
+    drawBackgroundFrame(targetCanvas);
 
     const activeCues = SRTParser.atTime(parsedCues, timeMs);
     const activeText = activeCues
@@ -649,7 +793,7 @@ export function initSrtUi() {
   }
 
   async function exportVideo() {
-    if (parsedCues.length === 0) {
+    if (!hasTimelineContent()) {
       return;
     }
 
@@ -715,7 +859,7 @@ export function initSrtUi() {
       return;
     }
 
-    drawPreviewFrame(previewCanvas, previewTimeMs);
+    drawBackgroundFrame(previewCanvas);
     const subtitleContext = subtitleCanvas.getContext("2d");
 
     if (!captionFontsReady) {
@@ -752,6 +896,7 @@ export function initSrtUi() {
 
   function stopPreview() {
     previewPlaying = false;
+    backgroundVideo?.element.pause();
     playPreviewBtn.classList.remove("is-playing");
     playPreviewBtn.setAttribute("aria-label", "Play preview");
     playPreviewBtn.title = "Play preview";
@@ -777,8 +922,8 @@ export function initSrtUi() {
   }
 
   async function playPreview() {
-    if (parsedCues.length === 0) {
-      showToast(toastRegion, "Parse subtitles before previewing.", "error");
+    if (!hasTimelineContent()) {
+      showToast(toastRegion, "Import a background video or parse subtitles before previewing.", "error");
       return;
     }
 
@@ -791,6 +936,10 @@ export function initSrtUi() {
     }
 
     previewPlaying = true;
+    if (backgroundVideo) {
+      backgroundVideo.element.currentTime = Math.min(backgroundVideo.duration, previewTimeMs / 1000);
+      backgroundVideo.element.play().catch(() => undefined);
+    }
     previewStartedAt = performance.now();
     previewStartedTime = previewTimeMs;
     playPreviewBtn.classList.add("is-playing");
@@ -800,7 +949,8 @@ export function initSrtUi() {
   }
 
   function updatePreviewDuration(cues) {
-    previewDurationMs = Math.max(1, cues.reduce((last, cue) => Math.max(last, cue.endMs), 0));
+    const captionsDurationMs = cues.reduce((last, cue) => Math.max(last, cue.endMs), 0);
+    previewDurationMs = Math.max(1, captionsDurationMs, getBackgroundVideoDurationMs());
     previewTimeMs = Math.min(previewTimeMs, previewDurationMs);
     const displayDurationMs = cues.length > 0 ? previewDurationMs : 0;
 
@@ -821,6 +971,7 @@ export function initSrtUi() {
     }
 
     renderTimeline(cues);
+    updateBackgroundLayerTrack();
     renderPreview();
   }
 
@@ -1023,6 +1174,10 @@ export function initSrtUi() {
     refreshAdjustedCues();
     saveSessionSettings();
   });
+  backgroundVideoInput?.addEventListener("change", () => {
+    loadBackgroundVideo(backgroundVideoInput.files?.[0]);
+  });
+  clearBackgroundVideoBtn?.addEventListener("click", clearBackgroundVideo);
 
   exportSubtitlePngBtn.addEventListener("click", exportSubtitlePng);
   exportVideoBtn.addEventListener("click", exportVideo);

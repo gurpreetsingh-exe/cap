@@ -161,7 +161,7 @@ export async function encodeCanvasVideo({
 
   for (let frameIndex = 0; frameIndex <= frameCount; frameIndex += 1) {
     const timeMs = Math.min(durationMs, frameIndex * frameDurationMs);
-    renderFrame(canvas, timeMs);
+    await renderFrame(canvas, timeMs);
     await videoSource.add(timeMs / 1000, frameDurationSeconds, {
       keyFrame: frameIndex % (fps * 2) === 0,
     });

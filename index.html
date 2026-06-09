@@ -786,7 +786,7 @@
       .timeline-track {
         position: relative;
         overflow: hidden;
-        min-height: 76px;
+        min-height: 92px;
         cursor: ew-resize;
         touch-action: none;
         background:
@@ -802,7 +802,7 @@
 
       .timeline-cue {
         position: absolute;
-        top: 16px;
+        top: 42px;
         min-width: 24px;
         height: 42px;
         overflow: hidden;
@@ -817,6 +817,27 @@
         -webkit-user-select: none;
         user-select: none;
         pointer-events: none;
+      }
+
+      .timeline-layer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 20px;
+        overflow: hidden;
+        padding: 3px 6px;
+        border-radius: 2px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-size: 10px;
+        pointer-events: none;
+      }
+
+      .timeline-layer.video-layer {
+        top: 12px;
+        color: #d7edf4;
+        background: rgba(36, 142, 166, 0.22);
+        border: 1px solid rgba(74, 190, 214, 0.45);
       }
 
       .timeline-playhead {
@@ -1038,6 +1059,11 @@
                 <span>Cue Gap (ms)</span>
                 <input id="cueDelayInput" type="number" min="0" max="60000" step="100" value="0">
               </label>
+              <label class="field">
+                <span>Background Video</span>
+                <input id="backgroundVideoInput" type="file" accept="video/*">
+              </label>
+              <button class="btn" id="clearBackgroundVideoBtn" type="button" disabled>Clear Background</button>
               <div class="action-grid" aria-label="Editor actions">
                 <button class="btn primary" id="parseBtn" type="button">Parse</button>
                 <button class="btn" id="sampleBtn" type="button">Load Sample</button>
@@ -1113,6 +1139,7 @@
               <span id="timelineEndLabel">00:00:00,000</span>
             </div>
             <div class="timeline-track" id="timelineTrack">
+              <div class="timeline-layer video-layer" id="videoLayerTrack" hidden></div>
               <div class="timeline-playhead" id="timelinePlayhead"></div>
             </div>
           </div>
